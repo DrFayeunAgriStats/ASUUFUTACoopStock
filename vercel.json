@@ -1,5 +1,5 @@
 {
   "framework": null,
-  "buildCommand": null,
-  "outputDirectory": "."
+  "buildCommand": "mkdir -p dist && cp index.html app.js coop-auth.js coop-config.js style.css icon.svg manifest.webmanifest sw.js dist/",
+  "outputDirectory": "dist"
 }
