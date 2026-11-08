@@ -54,49 +54,51 @@ function withExpandedCatalogue(saved){
   return {...current,products,ledger:[...openingStock,...current.ledger]};
 }
 const key='asuu-coop-stock-v1';
-let state=withExpandedCatalogue(JSON.parse(localStorage.getItem(key) || 'null'));
+let state=workspaceMode?{products:[],members:[],ledger:[]}:withExpandedCatalogue(JSON.parse(localStorage.getItem(key) || 'null'));
 let page='Dashboard', member='M001', filter='';
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN',maximumFractionDigits:2}).format(value/100);
 const sum=values=>values.reduce((a,b)=>a+b,0);
-const stock=id=>sum(state.ledger.filter(x=>x.product===id).map(x=>x.qty||0));
+const stock=id=>workspaceMode?(state.products.find(p=>p.id===id)?.on_hand??0):sum(state.ledger.filter(x=>x.product===id).map(x=>x.qty||0));
 const entries=(...types)=>state.ledger.filter(x=>types.includes(x.type)).slice().reverse();
 const name=id=>state.products.find(x=>x.id===id)?.name||'';
 const person=id=>state.members.find(x=>x.id===id)?.name||'Walk-in';
 const amountDue=id=>sum(state.ledger.filter(x=>x.member===id).map(x=>x.type==='payment'?-x.amount:x.credit?x.amount:0));
 const remaining=id=>sum(state.ledger.filter(x=>x.type==='return'&&x.sale===id).map(x=>x.qty))+(state.ledger.find(x=>x.id===id)?.qty||0);
 const date=at=>new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Lagos'}).format(new Date(at));
-const btn=(label,action,primary=false)=>'<button class="'+(primary?'primary':'secondary')+'" data-action="'+action+'">'+label+'</button>';
+const canAct=action=>!workspaceMode||(Boolean(coopSession?.role)&&action==='refresh')||(coopSession?.role==='staff'&&['receipt','sale'].includes(action))||(coopSession?.role==='exco'&&action==='export');
+const allowedPage=p=>!workspaceMode||(['Dashboard','Products','Stock','Sales'].includes(p)||(p==='Reports'&&coopSession?.role==='exco'));
+const btn=(label,action,primary=false)=>!canAct(action)?'':'<button class="'+(primary?'primary':'secondary')+'" data-action="'+action+'">'+label+'</button>';
 const table=(headers,rows)=>rows.length?'<div class="scroll"><table><thead><tr>'+headers.map(x=>'<th scope="col">'+x+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching records.</div>';
 const panel=(title,body,action='')=>'<section class="panel"><div class="panel-head"><h2>'+title+'</h2>'+action+'</div>'+body+'</section>';
 const card=(label,value)=>'<div class="card"><span>'+label+'</span><strong>'+value+'</strong></div>';
 const badge=(label,warning=false)=>'<span class="badge '+(warning?'warn':'')+'">'+label+'</span>';
 function activity(rows){
-  return table(['Time (WAT)','Activity','Reference','Details'],rows.map(x=>[date(x.at),labels[x.type],esc(x.id),esc(x.note||name(x.product)||person(x.member))]));
+  return table(['Time (WAT)','Activity','Reference','Details',...(workspaceMode?['Recorded by']:[])],rows.map(x=>[date(x.at),labels[x.type],esc(x.id),esc(x.note||name(x.product)||person(x.member)),...(workspaceMode?[esc(x.actor)]:[])]));
 }
 function render(){
-  $('nav').innerHTML=Object.entries(pages).map(([p,i])=>'<button data-page="'+p+'" '+(p===page?'aria-current="page"':'')+'><span aria-hidden="true">'+i+'</span>'+p+'</button>').join('');
+  $('nav').innerHTML=Object.entries(pages).filter(([p])=>allowedPage(p)).map(([p,i])=>'<button data-page="'+p+'" '+(p===page?'aria-current="page"':'')+'><span aria-hidden="true">'+i+'</span>'+p+'</button>').join('');
   $('crumb').textContent=page;
   const low=state.products.filter(p=>stock(p.id)<=p.reorder);
   const saleRows=entries('sale','return');
   const due=sum(state.members.map(m=>amountDue(m.id)));
   const sections={
-    Dashboard: ['Stock overview','Monitor stock, shop sales and member credit from one workspace.',btn('Receive stock','receipt')+btn('Record sale','sale',true),
-      '<div class="cards">'+card('Active products',state.products.length)+card('Low-stock items',low.length)+card('Net sales',money(sum(saleRows.map(x=>x.amount))))+card('Member credit outstanding',money(due))+'</div><div class="grid">'+panel('Recent activity',activity(state.ledger.slice(-6).reverse()))+panel('Low stock',table(['Product','On hand','Reorder at'],low.map(p=>[esc(p.name)+'<small>'+esc(p.unit)+'</small>',badge(stock(p.id),true),p.reorder])))+'</div>'],
-    Products:['Product catalogue','Manage stock-keeping units, selling prices and reorder points.',btn('Add product','product',true),
+    Dashboard: ['Stock overview','Monitor stock, shop sales and member credit from one workspace.',btn('Receive stock','receipt')+btn('Record sale','sale',true)+(workspaceMode?btn('Refresh','refresh'):''),
+      '<div class="cards">'+card('Active products',state.products.length)+card('Low-stock items',low.length)+card('Net sales',money(sum(saleRows.map(x=>x.amount))))+(workspaceMode?'':card('Member credit outstanding',money(due)))+'</div><div class="grid">'+panel('Recent activity',activity(state.ledger.slice(-6).reverse()))+panel('Low stock',table(['Product','On hand','Reorder at'],low.map(p=>[esc(p.name)+'<small>'+esc(p.unit)+'</small>',badge(stock(p.id),true),p.reorder])))+'</div>'],
+    Products:['Product catalogue',workspaceMode?'Check product quantities and prices.':'Manage stock-keeping units, selling prices and reorder points.',btn('Add product','product',true),
       panel('Products',table(['SKU','Product','Category','Unit','Selling price','On hand','Status'],state.products.filter(p=>[p.sku,p.name,p.unit,categoryOf(p)].some(v=>v.toLowerCase().includes(filter.toLowerCase()))).map(p=>[esc(p.sku),esc(p.name),esc(categoryOf(p)),esc(p.unit),money(p.price),stock(p.id),stock(p.id)<=p.reorder?badge('Low stock',true):badge('In stock')])),'<input id="filter" class="search" aria-label="Search products or categories" placeholder="Product or category…" value="'+esc(filter)+'">')],
-    Stock:['Stock movements','Receive goods and log physical count corrections.',btn('Count correction','adjustment')+btn('Receive stock','receipt',true),
+    Stock:['Stock movements',workspaceMode?'Review goods received and stock movements.':'Receive goods and log physical count corrections.',btn('Count correction','adjustment')+btn('Receive stock','receipt',true),
       panel('Movement ledger',table(['Time (WAT)','Reference','Product','Movement','Quantity','Note'],entries('receipt','adjustment','sale','return').map(x=>[date(x.at),esc(x.id),esc(name(x.product)),labels[x.type],x.qty>0?'+'+x.qty:x.qty,esc(x.note||'')])) )],
-    Sales:['Sales and returns','Record paid and member-credit sales, then reverse eligible quantities with a return.',btn('Record return','return')+btn('Record sale','sale',true),
+    Sales:[workspaceMode?'Sales':'Sales and returns',workspaceMode?'Review recorded paid sales.':'Record paid and member-credit sales, then reverse eligible quantities with a return.',btn('Record return','return')+btn('Record sale','sale',true),
       panel('Sales ledger',table(['Reference','Date (WAT)','Product','Units','Member','Type','Amount'],saleRows.map(x=>[esc(x.id),date(x.at),esc(name(x.product)),x.type==='sale'?-x.qty:x.qty,esc(person(x.member)),x.type==='return'?badge('Return',true):badge(x.credit?'Member credit':'Paid',x.credit),money(x.amount)])))],
     Payments:['Member payments','Record payments against outstanding shop credit.',btn('Record payment','payment',true),
       panel('Credit balances',table(['Member ID','Member','Outstanding'],state.members.map(m=>[esc(m.id),esc(m.name),money(amountDue(m.id))])))+panel('Payment history',activity(entries('payment')))],
     'Member statement':['Member purchase statement','Preview what a member could see in their own shop statement. Switch sample members below.', '',
       panel('Statement', '<div class="panel-head"><label class="member-picker">Sample member<select id="member">'+state.members.map(m=>'<option value="'+m.id+'" '+(m.id===member?'selected':'')+'>'+esc(m.name)+'</option>').join('')+'</select></label>'+badge('Outstanding '+money(amountDue(member)),true)+'</div>'+
       table(['Reference','Date (WAT)','Activity','Product / note','Amount'],entries('sale','return','payment').filter(x=>x.member===member).map(x=>[esc(x.id),date(x.at),labels[x.type],esc(name(x.product)||x.note),money(x.type==='payment'?-x.amount:x.amount)])))],
-    Reports:['Reports','Review sales, collections and stock activity. Export the demo transaction ledger.',btn('Export CSV','export',true),
-      '<div class="cards">'+card('Net sales',money(sum(saleRows.map(x=>x.amount))))+card('Credit payments',money(sum(entries('payment').map(x=>x.amount))))+card('Outstanding credit',money(due))+card('Stock movements',entries('receipt','adjustment','sale','return').length)+'</div>'+panel('Transaction activity',activity(state.ledger.slice().reverse()))]
+    Reports:['Reports',workspaceMode?'Review sales and stock activity, and export the transaction ledger.':'Review sales, collections and stock activity. Export the demo transaction ledger.',btn('Export CSV','export',true),
+      '<div class="cards">'+card('Net sales',money(sum(saleRows.map(x=>x.amount))))+(workspaceMode?'':card('Credit payments',money(sum(entries('payment').map(x=>x.amount))))+card('Outstanding credit',money(due)))+card('Stock movements',entries('receipt','adjustment','sale','return').length)+'</div>'+panel('Transaction activity',activity(state.ledger.slice().reverse()))]
   };
   const [title,desc,actions,body]=sections[page];
   $('main').innerHTML='<section class="hero"><div><div class="eyebrow">COOPERATIVE STORE</div><h1>'+title+'</h1><p>'+desc+'</p></div><div class="actions">'+actions+'</div></section>'+body;
@@ -112,7 +114,7 @@ function form(action){
     product:()=>input('name','Product name','text','maxlength="75"')+input('sku','Unique SKU','text','maxlength="25"')+input('unit','Unit of sale','text','maxlength="30"')+select('category','Category',['Staples','Provisions','Toiletries','Uncategorised'].map(x=>[x,x]))+input('price','Selling price (₦)','number','min="0.01" max="10000000" step="0.01"')+input('reorder','Reorder point','number','min="0" max="1000000" step="1"'),
     receipt:()=>product()+quantity()+note('Supplier or delivery reference'),
     adjustment:()=>product()+quantity('Actual physical count',0)+note(),
-    sale:()=>product()+quantity()+select('method','Sale type',[['paid','Paid in full'],['credit','Member credit']])+select('member','Member',[['walk','Walk-in'],...members]),
+    sale:()=>product()+quantity()+(workspaceMode?'':select('method','Sale type',[['paid','Paid in full'],['credit','Member credit']])+select('member','Member',[['walk','Walk-in'],...members])),
     return:()=>select('sale','Original sale',[['','Select a sale'],...entries('sale').filter(x=>remaining(x.id)<0).map(x=>[x.id,x.id+' · '+name(x.product)+' · '+(-remaining(x.id))+' returnable'])])+quantity()+note(),
     payment:()=>select('member','Member',[['','Select member'],...members.filter(([id])=>amountDue(id)>0).map(([id,n])=>[id,n+' · '+money(amountDue(id))])])+input('amount','Payment amount (₦)','number','min="0.01" max="10000000000000" step="0.01"')+note('Payment reference')
   };
@@ -120,6 +122,7 @@ function form(action){
   const dialog=$('dialog');
   dialog.innerHTML='<h2>'+titles[action]+'</h2><form data-form="'+action+'">'+fields[action]()+'<p class="error" role="alert"></p><div class="actions">'+btn('Cancel','cancel')+'<button class="primary" type="submit">Save record</button></div></form>';
   dialog.querySelector('[data-action=cancel]').type='button';
+  if(workspaceMode)dialog.querySelector('form').dataset.requestId=crypto.randomUUID();
   dialog.showModal();
 }
 function record(action,d){
@@ -166,33 +169,53 @@ function record(action,d){
 }
 function exportLedger(){
   const csv=value=>'"'+String(value??'').replace(/^[\s]*[=+@\-]/, m=>"'"+m).replaceAll('"','""')+'"';
-  const rows=[['Reference','Timestamp UTC','Type','Product','Member ID','Quantity change','Amount NGN','Note'],
-    ...state.ledger.map(x=>[x.id,x.at,labels[x.type],name(x.product),x.member,x.qty,typeof x.amount==='number'?x.amount/100:'',x.note])];
+  const rows=[['Reference','Timestamp UTC','Type','Product','Member ID','Quantity change','Amount NGN','Note',...(workspaceMode?['Recorded by']:[])],
+    ...state.ledger.map(x=>[x.id,x.at,labels[x.type],name(x.product),x.member,x.qty,typeof x.amount==='number'?x.amount/100:'',x.note,...(workspaceMode?[x.actor]:[])])];
   const url=URL.createObjectURL(new Blob([rows.map(r=>r.map(v=>typeof v==='number'?v:csv(v)).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
-  const a=document.createElement('a');a.href=url;a.download='asuu-futa-demo-ledger.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const a=document.createElement('a');a.href=url;a.download=workspaceMode?'asuu-futa-ledger.csv':'asuu-futa-demo-ledger.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 document.addEventListener('click',e=>{
   const target=e.target.closest('button');
   if(!target)return;
-  if(target.dataset.page){page=target.dataset.page;render();return;}
+  if(target.id==='sign-out'){coopSignOut();return;}
+  if(target.dataset.page&&allowedPage(target.dataset.page)){page=target.dataset.page;render();return;}
   const action=target.dataset.action;
   if(action==='cancel')$('dialog').close();
-  else if(action==='export')exportLedger();
-  else if(action)form(action);
+  else if(action==='refresh'&&canAct(action))loadCoopWorkspace().catch(error=>{if(coopSession)$('toast').textContent=error.message;});
+  else if(action==='export'&&canAct(action))exportLedger();
+  else if(action&&canAct(action))form(action);
 });
-document.addEventListener('submit',e=>{
+document.addEventListener('submit',async e=>{
+  const form=e.target;
+  if(!form.dataset.form)return;
   e.preventDefault();
+  const action=form.dataset.form;
+  if(!canAct(action))return;
+  const submit=form.querySelector('[type=submit]');
+  if(submit.disabled)return;
+  submit.disabled=true;
   try{
-    state=withExpandedCatalogue(JSON.parse(localStorage.getItem(key)||'null'));
-    record(e.target.dataset.form,Object.fromEntries(new FormData(e.target)));
+    const data=Object.fromEntries(new FormData(form));
+    if(workspaceMode){
+      await coopRequest('/rest/v1/rpc/coop_post', {body:{
+        p_request:form.dataset.requestId,p_kind:action,p_product:data.product,p_qty:Number(data.qty),p_note:data.note||null
+      }});
+      $('dialog').close();
+      try { await loadCoopWorkspace(); }
+      catch { if(coopSession) $('toast').textContent='Record saved. Refresh the workspace to see the updated stock.'; return; }
+    }else{
+      state=withExpandedCatalogue(JSON.parse(localStorage.getItem(key)||'null'));
+      record(action,data);
+    }
     $('dialog').close();render();
     $('toast').textContent='Record saved';
     clearTimeout(window.toastTimer);
     window.toastTimer=setTimeout(()=>$('toast').textContent='',2700);
-  }catch(err){e.target.querySelector('.error').textContent=err.message;}
+  }catch(err){form.querySelector('.error').textContent=err.message;}finally{submit.disabled=false;}
 });
 document.addEventListener('change',e=>{if(e.target.id==='member'){member=e.target.value;render();$('member').focus();}});
 document.addEventListener('input',e=>{if(e.target.id==='filter'){filter=e.target.value;const pos=e.target.selectionStart;render();$('filter').focus();$('filter').setSelectionRange(pos,pos);}});
-window.addEventListener('storage',e=>{if(e.key===key){state=withExpandedCatalogue(JSON.parse(e.newValue||'null'));render();}});
-render();
-if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+window.addEventListener('storage',e=>{if(!workspaceMode&&e.key===key){state=withExpandedCatalogue(JSON.parse(e.newValue||'null'));render();}});
+if(workspaceMode)showCoopSignIn();
+else render();
+if(!workspaceMode&&'serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
